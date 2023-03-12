@@ -1,13 +1,11 @@
 # 봇의 토근이나 초기화 관련된 코드
-import json
 import openai
-import requests
 import telegram as tel
 from configparser import ConfigParser
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 config = ConfigParser()
-config.read("config.ini")
+config.read("config/config.ini")
 
 
 class TelegramBot:
@@ -15,18 +13,7 @@ class TelegramBot:
     def __init__(self, name, token):
         self.core = tel.Bot(token)
         self.updater = Updater(token, use_context=True)
-        self.id = self.find_chat_id(token)
         self.name = name
-
-    def find_chat_id(self, token):
-        url = f"https://api.telegram.org/bot{token}/getUpdates"
-        res = requests.get(url)
-        res = json.loads(res.text)
-
-        return res["result"][0]["message"]["chat"]["id"]
-
-    def sendMessage(self, text):
-        self.core.sendMessage(chat_id=self.id, text=text)
 
     def stop(self):
         self.updater.start_polling()
@@ -38,31 +25,40 @@ class TelegramBot:
 class ChatBot(TelegramBot):
 
     def __init__(self):
-        self.token = config["TELEGRAM"]["ACCESS_TOKEN"] # Telegram Access Token
+        self.token = config["TELEGRAM"]["ACCESS_TOKEN"]
         TelegramBot.__init__(self, "chatGPT", self.token)
-        self.updater.stop()
+        self.message = []
 
     def add_handler(self, cmd, func):
         self.updater.dispatcher.add_handler(CommandHandler(cmd, func))
 
     def chatGPT(self, update, context):
         user_text = update.message.text
-        openai.api_key = config["CHATGPT"]["API_KEY"] # ChatGPT API Key
-        completion = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
+        openai.api_key = config["CHATGPT"]["API_KEY"]
+
+        if user_text:
+            self.message.append(
                 {
                     "role": "user",
                     "content": user_text
                 }
-            ]
-        )
-        response = completion.choices[0].message["content"]
-        self.sendMessage(response)
+            )
+            completion = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=self.message
+            )
+            self.message.append(completion.choices[0].message)
+            response = completion.choices[0].message["content"]
+
+            context.bot.send_message(
+                chat_id=update.effective_chat.id, text=response)
+
+    def clear_message(self):
+        self.message = []
 
     def start(self):
-        self.sendMessage("안녕하세요. OpenAI의 ChatGPT 기반 봇입니다.")
-        GPT_hander = MessageHandler(Filters.text & (~Filters.command), self.chatGPT)
+        GPT_hander = MessageHandler(
+            Filters.text & (~Filters.command), self.chatGPT)
         self.updater.dispatcher.add_handler(GPT_hander)
         self.updater.start_polling()
         self.updater.idle()
